@@ -300,42 +300,8 @@ Each row key should match the `key` value defined in the column configuration.
 * Desktop dashboards
 * CRUD applications
 * Job management tools
-* NCR tracking systems
 * Stock or asset registers
 * Reporting interfaces
-* Internal business systems
-
----
-
-## Example Project Structure
-
-```text
-your-project/
-├── app.py
-├── assets/
-│   ├── ctkdatatable-preview.png
-│   └── ctkdatatable-badges-preview.png
-├── database/
-│   └── database.py
-└── README.md
-```
-
----
-
-## Roadmap
-
-Planned improvements may include:
-
-* Column sorting
-* Searching and filtering
-* Row selection
-* Action buttons
-* Pagination
-* Editable cells
-* Custom themes
-* Improved scrollbars
-* More column types
-* More documentation examples
 
 ---
 
