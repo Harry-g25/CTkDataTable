@@ -643,6 +643,7 @@ When the table has focus, use Up, Down, Page Up, Page Down, Home, and End to mov
 ## More Detail
 
 - Full API reference: [docs/Docs.md](https://github.com/Harry-g25/CTkTableData/blob/main/docs/Docs.md)
+- Publishing guide: [docs/Publishing.md](https://github.com/Harry-g25/CTkTableData/blob/main/docs/Publishing.md)
 - Standalone HTML guide: [docs/Docs.html](https://github.com/Harry-g25/CTkTableData/blob/main/docs/Docs.html)
 - Basic example: [CTkDataTable/examples/basic_table.py](https://github.com/Harry-g25/CTkTableData/blob/main/CTkDataTable/examples/basic_table.py)
 - NCR records example: [CTkDataTable/examples/ncr_records.py](https://github.com/Harry-g25/CTkTableData/blob/main/CTkDataTable/examples/ncr_records.py)
