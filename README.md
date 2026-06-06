@@ -16,7 +16,11 @@
     <img src="https://img.shields.io/pypi/pyversions/CTkDataTable?style=for-the-badge&amp;logo=python&amp;logoColor=white&amp;color=2563eb" />
   </a>
   <img src="https://img.shields.io/badge/CustomTkinter-Compatible-111827?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Status-In%20Development-a855f7?style=for-the-badge" />
+  <a href="https://harry-g25.github.io/CTkDataTable-Docs-Website/">
+  <img src="https://img.shields.io/badge/Docs-View%20Documentation-a855f7?style=for-the-badge&amp;logo=readthedocs&amp;logoColor=white" />
+</a>
+
+
 </p>
 
 </div>
