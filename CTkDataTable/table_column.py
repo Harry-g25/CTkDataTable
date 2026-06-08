@@ -232,7 +232,7 @@ class Column(Mapping):
         return self
 
     def width(self, pixels: int) -> Column:
-        """Set the column width in pixels."""
+        """Set the preferred column width in logical pixels."""
         self._data["width"] = pixels
         return self
 

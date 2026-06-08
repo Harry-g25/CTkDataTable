@@ -52,14 +52,14 @@ class CTkDataTableGuiTests(unittest.TestCase):
             self.assertEqual(table._table_border_width(), 2)
             self.assertEqual(colors["header_bg"], "#101827")
             self.assertEqual(colors["selected_text"], "#ffffff")
-            self.assertEqual(table._renderer.cell_padding_x, 16)
-            self.assertEqual(table._renderer.badge_radius, 6)
-            self.assertEqual(table._renderer.action_radius, 8)
+            self.assertEqual(table._renderer.cell_padding_x, table._scale_dimension(16))
+            self.assertEqual(table._renderer.badge_radius, table._scale_dimension(6))
+            self.assertEqual(table._renderer.action_radius, table._scale_dimension(8))
 
             table.configure_style(header_bg="#1f2937", action_radius=10)
 
             self.assertEqual(table._theme_colors()["header_bg"], "#1f2937")
-            self.assertEqual(table._renderer.action_radius, 10)
+            self.assertEqual(table._renderer.action_radius, table._scale_dimension(10))
         finally:
             _destroy_root(root)
 
@@ -88,6 +88,57 @@ class CTkDataTableGuiTests(unittest.TestCase):
             self.assertEqual([row["id"] for row in table._model.get_visible_rows()], [1, 3])
             self.assertEqual(table._model.require_column("name").width, 220)
             self.assertEqual(table.get_column_width("name"), 220)
+        finally:
+            _destroy_root(root)
+
+    def test_fill_column_width_mode_expands_to_canvas_width(self) -> None:
+        root = _make_root()
+        try:
+            table = CTkDataTable(root, columns=_columns(), data=_rows(), column_width_mode="fill")
+
+            preferred_total = sum(table._scale_dimension(column["width"]) for column in _columns())
+            viewport_width = int(preferred_total + table._scale_dimension(240))
+            event = tk.Event()
+            event.width = viewport_width
+            event.height = int(table._scale_dimension(220))
+
+            table._handle_configure(event)
+
+            self.assertEqual(table.get_column_width_mode(), "fill")
+            self.assertAlmostEqual(table._total_table_width(), viewport_width)
+            self.assertAlmostEqual(table._column_edges_cache[-1], viewport_width)
+            self.assertGreater(table._visible_columns()[1].width, table._scale_dimension(160))
+        finally:
+            _destroy_root(root)
+
+    def test_fixed_columns_are_scaled_in_canvas_coordinates(self) -> None:
+        root = _make_root()
+        try:
+            table = CTkDataTable(root, columns=_columns(), data=_rows())
+            event = tk.Event()
+            event.width = int(table._scale_dimension(800))
+            event.height = int(table._scale_dimension(220))
+
+            table._handle_configure(event)
+
+            expected_width = sum(table._scale_dimension(column["width"]) for column in _columns())
+            self.assertAlmostEqual(table._total_table_width(), expected_width)
+            self.assertAlmostEqual(table._column_edges_cache[-1], expected_width)
+        finally:
+            _destroy_root(root)
+
+    def test_column_drag_converts_canvas_delta_back_to_logical_width(self) -> None:
+        root = _make_root()
+        try:
+            table = CTkDataTable(root, columns=_columns(), data=_rows(), resizable_columns=True)
+            start_x = 100.0
+            table._resize_state = ("name", start_x, 160)
+            event = tk.Event()
+            event.x = int(round(start_x + table._scale_dimension(40)))
+
+            table._handle_drag(event)
+
+            self.assertEqual(table.get_column_width("name"), 200)
         finally:
             _destroy_root(root)
 
@@ -134,7 +185,7 @@ class CTkDataTableGuiTests(unittest.TestCase):
                 summaries={"id": summary},
             )
             table.grid(row=0, column=0, sticky="nsew")
-            table._canvas.configure(width=500, height=180)
+            table._table_canvas.configure(width=500, height=180)
             root.update_idletasks()
             table._canvas_width = 500
             table._canvas_height = 180
@@ -142,7 +193,7 @@ class CTkDataTableGuiTests(unittest.TestCase):
             calls[0] = 0
             table._invalidate_summary_cache()
             table._redraw(full=True)
-            table._set_y_offset(table._row_height)
+            table._set_y_offset(table._scaled_row_height())
 
             self.assertEqual(calls[0], 1)
         finally:
@@ -160,11 +211,16 @@ class CTkDataTableGuiTests(unittest.TestCase):
             root.update_idletasks()
 
             table._canvas_width = 500
-            table._canvas_height = table._header_height + table._row_height * 2 + table._bottom_cap_height() + 20
+            table._canvas_height = int(round(
+                table._scaled_header_height()
+                + table._scaled_row_height() * 2
+                + table._bottom_cap_height()
+                + table._scale_dimension(20)
+            ))
             table._clamp_offsets()
 
             self.assertEqual(list(table._visible_row_range()), [0, 1])
-            partial_row_y = table._header_height + table._row_height * 2 + 5
+            partial_row_y = table._scaled_header_height() + table._scaled_row_height() * 2 + table._scale_dimension(5)
             self.assertIsNone(table._row_index_from_y(partial_row_y))
         finally:
             _destroy_root(root)
@@ -200,7 +256,7 @@ class CTkDataTableGuiTests(unittest.TestCase):
                 on_link_click=events.append,
             )
             table.grid(row=0, column=0, sticky="nsew")
-            table._canvas.configure(width=760, height=180)
+            table._table_canvas.configure(width=760, height=180)
             root.update_idletasks()
             table._canvas_width = 760
             table._canvas_height = 180
@@ -237,7 +293,7 @@ class CTkDataTableGuiTests(unittest.TestCase):
                 on_checkbox_toggle=events.append,
             )
             table.grid(row=0, column=0, sticky="nsew")
-            table._canvas.configure(width=760, height=180)
+            table._table_canvas.configure(width=760, height=180)
             root.update_idletasks()
             table._canvas_width = 760
             table._canvas_height = 180
@@ -277,7 +333,7 @@ class CTkDataTableGuiTests(unittest.TestCase):
                 on_checkbox_toggle=events.append,
             )
             table.grid(row=0, column=0, sticky="nsew")
-            table._canvas.configure(width=760, height=180)
+            table._table_canvas.configure(width=760, height=180)
             root.update_idletasks()
             table._canvas_width = 760
             table._canvas_height = 180

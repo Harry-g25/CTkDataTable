@@ -1,4 +1,6 @@
 """A virtualized Canvas-rendered data table for CustomTkinter."""
+# By Harry Gomm 
+# And OpenAI GPT 5.5 
 
 from __future__ import annotations
 
@@ -36,6 +38,7 @@ SummaryDefinition = str | Callable[[list[RowData]], Any]
 AsyncFetchCallback = Callable[[], Iterable[Any]]
 AsyncSuccessCallback = Callable[[list[dict[str, Any]]], None]
 AsyncErrorCallback = Callable[[BaseException], None]
+ColumnWidthMode = Literal["fixed", "fill"]
 
 
 class CTkDataTable(ctk.CTkFrame):
@@ -56,6 +59,7 @@ class CTkDataTable(ctk.CTkFrame):
         font: Any | None = None,
         header_font: Any | None = None,
         horizontal_scroll: bool = False,
+        column_width_mode: ColumnWidthMode = "fixed",
         multi_select: bool = False,
         searchable: bool = False,
         search_delay_ms: int = 0,
@@ -116,19 +120,23 @@ class CTkDataTable(ctk.CTkFrame):
             raise ValueError("search_delay_ms must not be negative.")
         if min_column_width < 24:
             raise ValueError("min_column_width must be at least 24 pixels.")
+        if column_width_mode not in {"fixed", "fill"}:
+            raise ValueError("column_width_mode must be 'fixed' or 'fill'.")
         if not enable_style_hooks and (row_style is not None or cell_style is not None):
             raise ValueError("Set enable_style_hooks=True before passing row_style or cell_style callbacks.")
 
         self._columns = normalize_columns(columns)
         self._model = TableModel(self._columns)
         self._visible_columns_cache: list[TableColumn] = []
+        self._layout_columns_cache: list[TableColumn] = []
         self._column_edges_cache: tuple[float, ...] = ()
         self._column_edge_columns_cache: tuple[TableColumn, ...] = ()
-        self._total_table_width_cache = 0
+        self._total_table_width_cache = 0.0
         self._row_height = row_height
         self._header_height = header_height
         self._footer_height = footer_height
         self._horizontal_scroll_enabled = horizontal_scroll
+        self._column_width_mode = column_width_mode
         self._multi_select = multi_select
         self._searchable = searchable
         self._search_delay_ms = search_delay_ms
@@ -176,13 +184,16 @@ class CTkDataTable(ctk.CTkFrame):
         self._y_offset = 0.0
         self._x_offset = 0.0
 
-        self._font = font if font is not None else self._make_font(size=13)
+        self._font_source = font if font is not None else self._make_font(size=13)
         if header_font is not None:
-            self._header_font = header_font
+            self._header_font_source = header_font
         elif font is not None:
-            self._header_font = font
+            self._header_font_source = font
         else:
-            self._header_font = self._make_font(size=13, weight="bold")
+            self._header_font_source = self._make_font(size=13, weight="bold")
+        self._font = self._font_source
+        self._header_font = self._header_font_source
+        self._font_callback_sources: list[Any] = []
         self._refresh_column_cache()
 
         self.grid_columnconfigure(0, weight=1)
@@ -200,7 +211,14 @@ class CTkDataTable(ctk.CTkFrame):
         else:
             self.grid_rowconfigure(0, weight=1)
 
-        self._table_canvas = tk.Canvas(self, bd=0, highlightthickness=0, takefocus=True)
+        self._table_canvas = tk.Canvas(
+            self,
+            bd=0,
+            highlightthickness=0,
+            takefocus=True,
+            width=self._scale_dimension(self._desired_width),
+            height=self._scale_dimension(self._desired_height),
+        )
         self._table_canvas.grid(row=canvas_row, column=0, sticky="nsew")
 
         self._vertical_scrollbar = ctk.CTkScrollbar(
@@ -219,6 +237,8 @@ class CTkDataTable(ctk.CTkFrame):
             )
             self._horizontal_scrollbar.grid(row=canvas_row + 1, column=0, sticky="ew", padx=2, pady=(0, 2))
 
+        self._refresh_scaled_fonts()
+        self._register_font_callbacks()
         self._renderer = TableRenderer(self._table_canvas, self._font, self._header_font, self._resolve_color)
         self._apply_renderer_style()
         self._apply_layout_insets()
@@ -264,9 +284,27 @@ class CTkDataTable(ctk.CTkFrame):
 
         return self._model.require_column(column_key).width
 
+    def set_column_width_mode(self, mode: ColumnWidthMode) -> None:
+        """Set how visible columns are laid out across the table width."""
+
+        if mode not in {"fixed", "fill"}:
+            raise ValueError("column_width_mode must be 'fixed' or 'fill'.")
+        if mode == self._column_width_mode:
+            return
+        self._column_width_mode = mode
+        self._refresh_column_cache()
+        self._clamp_offsets()
+        self._redraw(full=True)
+
+    def get_column_width_mode(self) -> ColumnWidthMode:
+        """Return the current column width layout mode."""
+
+        return self._column_width_mode
+
     def refresh(self) -> None:
         """Refresh the current rendered view without changing data or selection."""
 
+        self._refresh_column_cache()
         self._clamp_offsets()
         self._redraw(full=True)
 
@@ -526,9 +564,90 @@ class CTkDataTable(ctk.CTkFrame):
             font.configure(size=size, weight=weight)
             return font
 
+    def _register_font_callbacks(self) -> None:
+        for font in (self._font_source, self._header_font_source):
+            already_registered = any(font is registered for registered in self._font_callback_sources)
+            if isinstance(font, ctk.CTkFont) and not already_registered:
+                font.add_size_configure_callback(self._handle_font_configure)
+                self._font_callback_sources.append(font)
+
+    def _remove_font_callbacks(self) -> None:
+        for font in list(self._font_callback_sources):
+            with suppress(ValueError):
+                font.remove_size_configure_callback(self._handle_font_configure)
+        self._font_callback_sources.clear()
+
+    def _handle_font_configure(self) -> None:
+        self._refresh_scaled_fonts()
+        if hasattr(self, "_renderer"):
+            self._renderer.configure_fonts(self._font, self._header_font)
+            self._redraw(full=True)
+
+    def _refresh_scaled_fonts(self) -> None:
+        if not hasattr(self, "_table_canvas"):
+            return
+        self._font = self._scaled_font(self._font_source)
+        self._header_font = self._scaled_font(self._header_font_source)
+        if hasattr(self, "_renderer"):
+            self._renderer.configure_fonts(self._font, self._header_font)
+
+    def _scaled_font(self, font: Any) -> Any:
+        if isinstance(font, (ctk.CTkFont, tuple)):
+            try:
+                return tkfont.Font(root=self._table_canvas, font=self._apply_font_scaling(font))
+            except Exception:
+                return font
+        if isinstance(font, tkfont.Font):
+            try:
+                options = font.actual()
+                size = int(font.cget("size"))
+                scaled_size = max(1, round(abs(size) * self._widget_scale()))
+                options["size"] = -scaled_size if size < 0 else scaled_size
+                return tkfont.Font(root=self._table_canvas, **options)
+            except Exception:
+                return font
+        return font
+
+    def _widget_scale(self) -> float:
+        try:
+            return max(0.01, float(self._get_widget_scaling()))
+        except Exception:
+            return 1.0
+
+    def _scale_dimension(self, value: float) -> float:
+        try:
+            return float(self._apply_widget_scaling(value))
+        except Exception:
+            return float(value)
+
+    def _unscale_dimension(self, value: float) -> float:
+        try:
+            return float(self._reverse_widget_scaling(value))
+        except Exception:
+            return float(value)
+
+    def _scaled_row_height(self) -> float:
+        return self._scale_dimension(self._row_height)
+
+    def _scaled_header_height(self) -> float:
+        return self._scale_dimension(self._header_height)
+
+    def _scaled_footer_height(self) -> float:
+        return self._scale_dimension(self._footer_height)
+
+    def _scaled_resize_hit_width(self) -> float:
+        return max(self._scale_dimension(self._resize_hit_width), 1.0)
+
+    def _scaled_table_corner_radius(self) -> float:
+        return self._scale_dimension(self._table_corner_radius())
+
+    def _scaled_table_border_width(self) -> float:
+        return self._scale_dimension(self._table_border_width())
+
     def _handle_configure(self, event: tk.Event[Any]) -> None:
         self._canvas_width = max(1, int(event.width))
         self._canvas_height = max(1, int(event.height))
+        self._refresh_column_cache()
         self._clamp_offsets()
         self._redraw(full=True)
 
@@ -540,7 +659,8 @@ class CTkDataTable(ctk.CTkFrame):
         elif args[0] == "scroll" and len(args) >= 3:
             amount = int(args[1])
             unit = args[2]
-            step = self._row_height if unit == "units" else max(self._row_height, self._body_height())
+            row_height = self._scaled_row_height()
+            step = row_height if unit == "units" else max(row_height, self._body_height())
             self._set_y_offset(self._y_offset + amount * step)
 
     def _handle_horizontal_scrollbar(self, *args: str) -> None:
@@ -551,7 +671,7 @@ class CTkDataTable(ctk.CTkFrame):
         elif args[0] == "scroll" and len(args) >= 3:
             amount = int(args[1])
             unit = args[2]
-            step = 40 if unit == "units" else max(80, self._canvas_width)
+            step = self._scale_dimension(40) if unit == "units" else max(self._scale_dimension(80), self._canvas_width)
             self._set_x_offset(self._x_offset + amount * step)
 
     def _handle_mousewheel(self, event: tk.Event[Any]) -> str:
@@ -566,17 +686,18 @@ class CTkDataTable(ctk.CTkFrame):
                 units = -1 if delta > 0 else 1
 
         if self._horizontal_scroll_enabled and getattr(event, "state", 0) & self._SHIFT_MASK:
-            self._set_x_offset(self._x_offset + units * 40)
+            self._set_x_offset(self._x_offset + units * self._scale_dimension(40))
         else:
-            self._set_y_offset(self._y_offset + units * self._row_height)
+            self._set_y_offset(self._y_offset + units * self._scaled_row_height())
         return "break"
 
     def _handle_click(self, event: tk.Event[Any]) -> str | None:
         self._table_canvas.focus_set()
-        if event.y < self._header_height:
+        if event.y < self._scaled_header_height():
             resize_column = self._resize_column_from_x(event.x)
             if resize_column is not None:
-                self._resize_state = (resize_column.key, float(event.x), resize_column.width)
+                start_width = self._model.require_column(resize_column.key).width
+                self._resize_state = (resize_column.key, float(event.x), start_width)
                 return "break"
             column = self._column_from_x(event.x)
             if column is not None and column.sortable:
@@ -639,7 +760,8 @@ class CTkDataTable(ctk.CTkFrame):
         if self._resize_state is None:
             return None
         column_key, start_x, start_width = self._resize_state
-        width = max(self._min_column_width, round(start_width + float(event.x) - start_x))
+        delta = self._unscale_dimension(float(event.x) - start_x)
+        width = max(self._min_column_width, round(start_width + delta))
         self._set_column_width(column_key, width)
         return "break"
 
@@ -676,7 +798,7 @@ class CTkDataTable(ctk.CTkFrame):
         return lambda: self._invoke_context_action(row_event, action_key)
 
     def _handle_double_click(self, event: tk.Event[Any]) -> str | None:
-        if event.y < self._header_height or self._loading:
+        if event.y < self._scaled_header_height() or self._loading:
             return "break"
         action_region = self._hit_action(event.x, event.y)
         if action_region is not None and action_region.kind == "checkbox":
@@ -700,7 +822,7 @@ class CTkDataTable(ctk.CTkFrame):
         keysym = getattr(event, "keysym", "")
         focused_view_index = self._model.focused_view_index()
 
-        page_size = max(1, self._body_height() // self._row_height)
+        page_size = max(1, int(self._body_height() // self._scaled_row_height()))
         last_index = len(self._model.view_indices) - 1
         target_index: int | None = None
 
@@ -781,7 +903,7 @@ class CTkDataTable(ctk.CTkFrame):
     def _handle_motion(self, event: tk.Event[Any]) -> None:
         if self._resize_state is not None:
             return
-        if event.y < self._header_height:
+        if event.y < self._scaled_header_height():
             self._update_header_cursor(self._resize_column_from_x(event.x))
         else:
             action_region = None if self._loading else self._hit_action(event.x, event.y)
@@ -841,7 +963,7 @@ class CTkDataTable(ctk.CTkFrame):
         for index in {edge_index - 1, edge_index}:
             if (
                 0 <= index < len(self._column_edges_cache)
-                and abs(content_x - self._column_edges_cache[index]) <= self._resize_hit_width
+                and abs(content_x - self._column_edges_cache[index]) <= self._scaled_resize_hit_width()
             ):
                 return self._column_edge_columns_cache[index]
         return None
@@ -1086,7 +1208,7 @@ class CTkDataTable(ctk.CTkFrame):
         self._renderer.draw_surface(
             canvas_width=self._canvas_width,
             canvas_height=self._canvas_height,
-            radius=self._table_corner_radius(),
+            radius=self._scaled_table_corner_radius(),
             colors=colors,
         )
 
@@ -1094,8 +1216,8 @@ class CTkDataTable(ctk.CTkFrame):
         self._renderer.draw_chrome(
             canvas_width=self._canvas_width,
             canvas_height=self._canvas_height,
-            radius=self._table_corner_radius(),
-            border_width=self._table_border_width(),
+            radius=self._scaled_table_corner_radius(),
+            border_width=self._scaled_table_border_width(),
             bottom_cap_height=self._bottom_cap_height(),
             colors=colors,
         )
@@ -1107,8 +1229,8 @@ class CTkDataTable(ctk.CTkFrame):
             self._visible_columns(),
             x_offset=self._x_offset,
             canvas_width=self._canvas_width,
-            header_height=self._header_height,
-            radius=self._table_corner_radius(),
+            header_height=self._scaled_header_height(),
+            radius=self._scaled_table_corner_radius(),
             sort_key=sort_key,
             sort_ascending=sort_ascending,
             filtered_column_keys=set(self._model.column_filters),
@@ -1125,8 +1247,8 @@ class CTkDataTable(ctk.CTkFrame):
             x_offset=self._x_offset,
             canvas_width=self._canvas_width,
             footer_top=self._footer_top(),
-            footer_height=self._footer_height,
-            radius=self._table_corner_radius(),
+            footer_height=self._scaled_footer_height(),
+            radius=self._scaled_table_corner_radius(),
             colors=colors,
         )
         self._table_canvas.tag_raise("footer")
@@ -1174,7 +1296,7 @@ class CTkDataTable(ctk.CTkFrame):
             row,
             self._visible_columns(),
             y=self._row_y(row_index),
-            row_height=self._row_height,
+            row_height=self._scaled_row_height(),
             x_offset=self._x_offset,
             canvas_width=self._canvas_width,
             selected=source_index in self._model.selected_source_indices,
@@ -1197,7 +1319,7 @@ class CTkDataTable(ctk.CTkFrame):
         ):
             message = "No matching records"
 
-        body_top = self._header_height
+        body_top = self._scaled_header_height()
         body_height = self._body_height()
         self._table_canvas.create_rectangle(
             0,
@@ -1210,12 +1332,14 @@ class CTkDataTable(ctk.CTkFrame):
         )
         center_y = body_top + body_height / 2
         if self._loading:
-            indicator_width = min(160, max(80, self._canvas_width * 0.3))
+            indicator_width = min(self._scale_dimension(160), max(self._scale_dimension(80), self._canvas_width * 0.3))
+            indicator_top = center_y + self._scale_dimension(20)
+            indicator_height = self._scale_dimension(4)
             self._table_canvas.create_rectangle(
                 (self._canvas_width - indicator_width) / 2,
-                center_y + 20,
+                indicator_top,
                 (self._canvas_width + indicator_width) / 2,
-                center_y + 24,
+                indicator_top + indicator_height,
                 fill=colors["loading_indicator"],
                 outline="",
                 tags=("state", "loading_indicator"),
@@ -1268,16 +1392,18 @@ class CTkDataTable(ctk.CTkFrame):
         body_height = self._body_height()
         if body_height <= 0 or not self._model.view_indices:
             return range(0)
-        start = max(0, int(self._y_offset // self._row_height))
-        end = min(len(self._model.view_indices), int((self._y_offset + body_height) // self._row_height))
+        row_height = self._scaled_row_height()
+        start = max(0, int(self._y_offset // row_height))
+        end = min(len(self._model.view_indices), int((self._y_offset + body_height) // row_height))
         return range(start, end)
 
     def _row_y(self, row_index: int) -> float:
-        return self._header_height + row_index * self._row_height - self._y_offset
+        return self._scaled_header_height() + row_index * self._scaled_row_height() - self._y_offset
 
     def _scroll_view_index_into_view(self, view_index: int) -> None:
-        row_top = view_index * self._row_height
-        row_bottom = row_top + self._row_height
+        row_height = self._scaled_row_height()
+        row_top = view_index * row_height
+        row_bottom = row_top + row_height
         viewport_top = self._y_offset
         viewport_bottom = self._y_offset + self._body_height()
 
@@ -1287,10 +1413,12 @@ class CTkDataTable(ctk.CTkFrame):
             self._set_y_offset(float(row_bottom - self._body_height()))
 
     def _row_index_from_y(self, y: float) -> int | None:
-        if y < self._header_height or y > self._footer_top():
+        header_height = self._scaled_header_height()
+        row_height = self._scaled_row_height()
+        if y < header_height or y > self._footer_top():
             return None
-        row_index = int((y - self._header_height + self._y_offset) // self._row_height)
-        row_bottom = (row_index + 1) * self._row_height
+        row_index = int((y - header_height + self._y_offset) // row_height)
+        row_bottom = (row_index + 1) * row_height
         if row_bottom > self._y_offset + self._body_height():
             return None
         if 0 <= row_index < len(self._model.view_indices):
@@ -1313,19 +1441,58 @@ class CTkDataTable(ctk.CTkFrame):
         return None
 
     def _visible_columns(self) -> list[TableColumn]:
-        return self._visible_columns_cache
+        return self._layout_columns_cache
 
     def _refresh_column_cache(self) -> None:
         visible_columns = [column for column in self._columns if column.visible]
+        layout_widths = self._layout_column_widths(visible_columns)
+        layout_columns = [
+            replace(column, width=max(0, int(round(width))))
+            for column, width in zip(visible_columns, layout_widths, strict=True)
+        ]
         edges: list[float] = []
         cursor = 0.0
-        for column in visible_columns:
-            cursor += column.width
+        for width in layout_widths:
+            cursor += width
             edges.append(cursor)
         self._visible_columns_cache = visible_columns
+        self._layout_columns_cache = layout_columns
         self._column_edges_cache = tuple(edges)
         self._column_edge_columns_cache = tuple(visible_columns)
-        self._total_table_width_cache = int(cursor)
+        self._total_table_width_cache = cursor
+
+    def _layout_column_widths(self, visible_columns: Sequence[TableColumn]) -> list[float]:
+        preferred_widths = [self._scale_dimension(column.width) for column in visible_columns]
+        if not preferred_widths:
+            return []
+        if self._column_width_mode == "fixed" or self._canvas_width <= 1:
+            return preferred_widths
+
+        viewport_width = float(self._canvas_width)
+        preferred_total = sum(preferred_widths)
+        if preferred_total <= 0:
+            return [viewport_width / len(preferred_widths) for _column in preferred_widths]
+
+        if preferred_total < viewport_width:
+            extra = viewport_width - preferred_total
+            return [width + extra * (width / preferred_total) for width in preferred_widths]
+
+        min_width = self._scale_dimension(self._min_column_width)
+        minimum_widths = [min(width, min_width) for width in preferred_widths]
+        minimum_total = sum(minimum_widths)
+        if minimum_total >= viewport_width:
+            return minimum_widths
+
+        shrink = preferred_total - viewport_width
+        capacities = [preferred - minimum for preferred, minimum in zip(preferred_widths, minimum_widths, strict=True)]
+        total_capacity = sum(capacities)
+        if total_capacity <= 0:
+            return preferred_widths
+
+        return [
+            preferred - shrink * (capacity / total_capacity)
+            for preferred, capacity in zip(preferred_widths, capacities, strict=True)
+        ]
 
     def _set_y_offset(self, value: float) -> None:
         old_offset = self._y_offset
@@ -1351,7 +1518,7 @@ class CTkDataTable(ctk.CTkFrame):
                 0,
                 0,
                 max(self._canvas_width, self._total_table_width()),
-                self._header_height + self._total_body_height() + self._active_footer_height(),
+                self._scaled_header_height() + self._total_body_height() + self._active_footer_height(),
             )
         )
 
@@ -1375,18 +1542,21 @@ class CTkDataTable(ctk.CTkFrame):
                 self._horizontal_scrollbar.set(first, last)
 
     def _body_height(self) -> int:
-        return max(0, self._footer_top() - self._header_height)
+        return max(0, int(self._footer_top() - self._scaled_header_height()))
 
-    def _active_footer_height(self) -> int:
-        return self._footer_height if self._footer_enabled else 0
+    def _active_footer_height(self) -> float:
+        return self._scaled_footer_height() if self._footer_enabled else 0.0
 
-    def _footer_top(self) -> int:
-        return max(self._header_height, self._canvas_height - self._active_footer_height() - self._bottom_cap_height())
+    def _footer_top(self) -> float:
+        return max(
+            self._scaled_header_height(),
+            self._canvas_height - self._active_footer_height() - self._bottom_cap_height(),
+        )
 
-    def _total_body_height(self) -> int:
-        return len(self._model.view_indices) * self._row_height
+    def _total_body_height(self) -> float:
+        return len(self._model.view_indices) * self._scaled_row_height()
 
-    def _total_table_width(self) -> int:
+    def _total_table_width(self) -> float:
         return self._total_table_width_cache
 
     def _max_y_offset(self) -> float:
@@ -1409,9 +1579,15 @@ class CTkDataTable(ctk.CTkFrame):
             return
         scrollbar_gap = self._scrollbar_gap()
         self._table_canvas.grid_configure(padx=0, pady=0)
-        self._vertical_scrollbar.grid_configure(padx=(scrollbar_gap, 0), pady=4)
+        self._vertical_scrollbar.grid_configure(
+            padx=(self._scale_dimension(scrollbar_gap), 0),
+            pady=self._scale_dimension(4),
+        )
         if self._horizontal_scrollbar is not None:
-            self._horizontal_scrollbar.grid_configure(padx=(0, scrollbar_gap), pady=(scrollbar_gap, 0))
+            self._horizontal_scrollbar.grid_configure(
+                padx=(0, self._scale_dimension(scrollbar_gap)),
+                pady=(self._scale_dimension(scrollbar_gap), 0),
+            )
 
     def _scrollbar_gap(self) -> int:
         radius = self._table_corner_radius()
@@ -1419,13 +1595,13 @@ class CTkDataTable(ctk.CTkFrame):
             return 0
         return max(4, min(8, math.ceil(radius / 2)))
 
-    def _bottom_cap_height(self) -> int:
+    def _bottom_cap_height(self) -> float:
         if self._footer_enabled:
             return 0
-        radius = self._table_corner_radius()
+        radius = self._scaled_table_corner_radius()
         if radius <= 0:
             return 0
-        return max(2, min(6, math.ceil(radius / 3)))
+        return max(self._scale_dimension(2), min(self._scale_dimension(6), math.ceil(radius / 3)))
 
     def _apply_frame_style(self) -> None:
         self.configure(corner_radius=0, border_width=0, fg_color="transparent")
@@ -1442,6 +1618,7 @@ class CTkDataTable(ctk.CTkFrame):
             progress_radius=self._style_number("progress_radius"),
             pill_radius=self._style_number("pill_radius"),
             action_radius=self._style_number("action_radius"),
+            scale=self._widget_scale(),
         )
 
     def _style_number(self, key: str) -> float | None:
@@ -1649,6 +1826,28 @@ class CTkDataTable(ctk.CTkFrame):
         except tk.TclError:
             return (127, 127, 127)
 
+    def _set_scaling(self, *args: Any, **kwargs: Any) -> None:
+        old_scale = self._widget_scale()
+        logical_y_offset = self._y_offset / old_scale if hasattr(self, "_y_offset") else 0.0
+        logical_x_offset = self._x_offset / old_scale if hasattr(self, "_x_offset") else 0.0
+
+        super()._set_scaling(*args, **kwargs)
+
+        if not hasattr(self, "_table_canvas"):
+            return
+        self._table_canvas.configure(
+            width=self._scale_dimension(self._desired_width),
+            height=self._scale_dimension(self._desired_height),
+        )
+        self._refresh_scaled_fonts()
+        self._apply_renderer_style()
+        self._apply_layout_insets()
+        self._refresh_column_cache()
+        self._y_offset = logical_y_offset * self._widget_scale()
+        self._x_offset = logical_x_offset * self._widget_scale()
+        self._clamp_offsets()
+        self._redraw(full=True)
+
     def _set_appearance_mode(self, mode_string: str) -> None:
         try:
             super()._set_appearance_mode(mode_string)
@@ -1657,3 +1856,7 @@ class CTkDataTable(ctk.CTkFrame):
                 self._theme_colors_cache = None
             if hasattr(self, "_table_canvas"):
                 self._redraw(full=True)
+
+    def destroy(self) -> None:
+        self._remove_font_callbacks()
+        super().destroy()

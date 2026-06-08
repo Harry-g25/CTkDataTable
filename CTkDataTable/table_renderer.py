@@ -46,6 +46,7 @@ class TableRenderer:
         self.font = font
         self.header_font = header_font
         self._resolve_color = color_resolver or (lambda color: str(color))
+        self.scale: float = 1.0
         self.cell_padding_x: float = self.DEFAULT_CELL_PADDING_X
         self.badge_padding_x: float = self.DEFAULT_BADGE_PADDING_X
         self.button_padding_x: float = self.DEFAULT_BUTTON_PADDING_X
@@ -68,9 +69,11 @@ class TableRenderer:
         progress_radius: float | None = None,
         pill_radius: float | None = None,
         action_radius: float | None = None,
+        scale: float = 1.0,
     ) -> None:
         """Apply table-wide spacing and radius options."""
 
+        self.scale = max(0.01, float(scale))
         self.cell_padding_x = self._dimension(cell_padding_x, self.DEFAULT_CELL_PADDING_X)
         self.badge_padding_x = self._dimension(badge_padding_x, self.DEFAULT_BADGE_PADDING_X)
         self.button_padding_x = self._dimension(button_padding_x, self.DEFAULT_BUTTON_PADDING_X)
@@ -79,6 +82,13 @@ class TableRenderer:
         self.progress_radius = self._optional_dimension(progress_radius)
         self.pill_radius = self._optional_dimension(pill_radius)
         self.action_radius = self._dimension(action_radius, self.DEFAULT_ACTION_RADIUS)
+        self._fit_text_cache.clear()
+
+    def configure_fonts(self, font: Any, header_font: Any) -> None:
+        """Update scaled fonts used for drawing and measuring text."""
+
+        self.font = font
+        self.header_font = header_font
         self._fit_text_cache.clear()
 
     def draw_surface(
@@ -169,7 +179,7 @@ class TableRenderer:
         *,
         x_offset: float,
         canvas_width: int,
-        header_height: int,
+        header_height: float,
         radius: float,
         sort_key: str | None,
         sort_ascending: bool,
@@ -198,17 +208,18 @@ class TableRenderer:
                 continue
 
             column_tag = _tag_value(column.key)
+            divider_inset = self._metric(8)
             self.canvas.create_line(
                 right,
-                8,
+                divider_inset,
                 right,
-                header_height - 8,
+                header_height - divider_inset,
                 fill=colors["header_divider"],
                 tags=("header", f"header_divider_{column_tag}"),
             )
 
-            indicator_width = 16 if column.key == sort_key else 0
-            filter_width = 12 if column.key in filtered_column_keys else 0
+            indicator_width = self._metric(16) if column.key == sort_key else 0
+            filter_width = self._metric(12) if column.key in filtered_column_keys else 0
             max_text_width = max(0, column.width - (self.cell_padding_x * 2) - indicator_width)
             max_text_width = max(0, max_text_width - filter_width)
             text = self._fit_text(column.title, max_text_width, self.header_font)
@@ -225,7 +236,7 @@ class TableRenderer:
 
             if column.key == sort_key:
                 self._draw_sort_indicator(
-                    right - self.cell_padding_x - 8,
+                    right - self.cell_padding_x - self._metric(8),
                     header_height / 2,
                     ascending=sort_ascending,
                     color=colors["sort_indicator"],
@@ -233,10 +244,10 @@ class TableRenderer:
                 )
             if column.key in filtered_column_keys:
                 self.canvas.create_oval(
-                    right - self.cell_padding_x - indicator_width - 8,
-                    header_height / 2 - 4,
+                    right - self.cell_padding_x - indicator_width - self._metric(8),
+                    header_height / 2 - self._metric(4),
                     right - self.cell_padding_x - indicator_width,
-                    header_height / 2 + 4,
+                    header_height / 2 + self._metric(4),
                     fill=colors["filter_indicator"],
                     outline="",
                     tags=("header", f"filter_{column_tag}"),
@@ -258,8 +269,8 @@ class TableRenderer:
         *,
         x_offset: float,
         canvas_width: int,
-        footer_top: int,
-        footer_height: int,
+        footer_top: float,
+        footer_height: float,
         radius: float,
         colors: Mapping[str, str],
     ) -> None:
@@ -293,11 +304,12 @@ class TableRenderer:
                 continue
 
             column_tag = _tag_value(column.key)
+            divider_inset = self._metric(8)
             self.canvas.create_line(
                 right,
-                footer_top + 8,
+                footer_top + divider_inset,
                 right,
-                footer_top + footer_height - 8,
+                footer_top + footer_height - divider_inset,
                 fill=colors["header_divider"],
                 tags=("footer", f"footer_divider_{column_tag}"),
             )
@@ -323,7 +335,7 @@ class TableRenderer:
         columns: list[TableColumn],
         *,
         y: float,
-        row_height: int,
+        row_height: float,
         x_offset: float,
         canvas_width: int,
         selected: bool,
@@ -409,8 +421,8 @@ class TableRenderer:
         *,
         left: float,
         y: float,
-        width: int,
-        height: int,
+        width: float,
+        height: float,
     ) -> list[ActionRegion]:
         """Return action button hit regions for a cell without drawing it."""
 
@@ -426,8 +438,8 @@ class TableRenderer:
         *,
         left: float,
         y: float,
-        width: int,
-        height: int,
+        width: float,
+        height: float,
         row_text_color: str | None,
         cell_style: Mapping[str, Any] | None,
         colors: Mapping[str, str],
@@ -504,8 +516,8 @@ class TableRenderer:
         column: TableColumn,
         left: float,
         y: float,
-        width: int,
-        height: int,
+        width: float,
+        height: float,
         colors: Mapping[str, str],
         tags: tuple[str, ...],
         *,
@@ -515,7 +527,7 @@ class TableRenderer:
         text = self._fit_text(style.text, max(0, width - self.cell_padding_x * 2), self.font)
         text_width = min(self.font.measure(text), max(0, width - self.cell_padding_x * 2))
         badge_width = min(width - self.cell_padding_x * 2, text_width + self.badge_padding_x * 2)
-        badge_height = min(26, max(20, height - 14))
+        badge_height = min(self._metric(26), max(self._metric(20), height - self._metric(14)))
 
         if column.align == "right":
             badge_left = left + width - self.cell_padding_x - badge_width
@@ -553,12 +565,12 @@ class TableRenderer:
         checked: bool,
         left: float,
         y: float,
-        width: int,
-        height: int,
+        width: float,
+        height: float,
         colors: Mapping[str, str],
         tags: tuple[str, ...],
     ) -> list[ActionRegion]:
-        box_size = min(18, max(14, height - 18))
+        box_size = min(self._metric(18), max(self._metric(14), height - self._metric(18)))
         box_left = left + (width - box_size) / 2
         box_top = y + (height - box_size) / 2
         fill = colors["checkbox_fill_checked"] if checked else colors["checkbox_fill"]
@@ -584,12 +596,12 @@ class TableRenderer:
             self.canvas.create_line(
                 check_points,
                 fill=colors["checkbox_check"],
-                width=2,
+                width=max(1, self._metric(2)),
                 capstyle="round",
                 joinstyle="round",
                 tags=tags + ("checkbox_check",),
             )
-        hit_padding = 4
+        hit_padding = self._metric(4)
         return [
             ActionRegion(
                 row_index=row_index,
@@ -611,8 +623,8 @@ class TableRenderer:
         column: TableColumn,
         left: float,
         y: float,
-        width: int,
-        height: int,
+        width: float,
+        height: float,
         colors: Mapping[str, str],
         tags: tuple[str, ...],
     ) -> None:
@@ -627,7 +639,7 @@ class TableRenderer:
         if bar_width <= 0:
             return
 
-        bar_height = min(18, max(12, height - 18))
+        bar_height = min(self._metric(18), max(self._metric(12), height - self._metric(18)))
         bar_left = left + self.cell_padding_x
         bar_top = y + (height - bar_height) / 2
         track_color = (
@@ -675,7 +687,7 @@ class TableRenderer:
             )
         except (KeyError, IndexError, ValueError):
             text = f"{percent:.0f}%"
-        fitted = self._fit_text(text, max(0, bar_width - 6), self.font)
+        fitted = self._fit_text(text, max(0, bar_width - self._metric(6)), self.font)
         self.canvas.create_text(
             bar_left + bar_width / 2,
             y + height / 2,
@@ -694,8 +706,8 @@ class TableRenderer:
         column: TableColumn,
         left: float,
         y: float,
-        width: int,
-        height: int,
+        width: float,
+        height: float,
         colors: Mapping[str, str],
         tags: tuple[str, ...],
         *,
@@ -736,7 +748,7 @@ class TableRenderer:
             text_left = text_x
             text_right = text_x + text_width
 
-        underline_y = y + height / 2 + 8
+        underline_y = y + height / 2 + self._metric(8)
         self.canvas.create_line(
             text_left,
             underline_y,
@@ -750,7 +762,12 @@ class TableRenderer:
                 row_index=row_index,
                 column_key=column.key,
                 action_key="link",
-                bounds=(max(left, text_left), y + 4, min(left + width, text_right), y + height - 4),
+                bounds=(
+                    max(left, text_left),
+                    y + self._metric(4),
+                    min(left + width, text_right),
+                    y + height - self._metric(4),
+                ),
                 kind="link",
             )
         ]
@@ -761,8 +778,8 @@ class TableRenderer:
         column: TableColumn,
         left: float,
         y: float,
-        width: int,
-        height: int,
+        width: float,
+        height: float,
         colors: Mapping[str, str],
         tags: tuple[str, ...],
         *,
@@ -772,12 +789,12 @@ class TableRenderer:
         if not values:
             return
 
-        gap = 6
+        gap = self._metric(6)
         available = max(0.0, width - self.cell_padding_x * 2)
         if available <= 0:
             return
-        pill_height = min(24, max(18, height - 16))
-        pill_padding = 9
+        pill_height = min(self._metric(24), max(self._metric(18), height - self._metric(16)))
+        pill_padding = self._metric(9)
 
         segments: list[tuple[str, float, str]] = []
         for raw_text in values:
@@ -845,8 +862,8 @@ class TableRenderer:
         column: TableColumn,
         left: float,
         y: float,
-        width: int,
-        height: int,
+        width: float,
+        height: float,
         colors: Mapping[str, str],
         tags: tuple[str, ...],
     ) -> list[ActionRegion]:
@@ -886,19 +903,20 @@ class TableRenderer:
         *,
         left: float,
         y: float,
-        width: int,
-        height: int,
+        width: float,
+        height: float,
     ) -> list[ActionRegion]:
-        gap = 6
-        button_height = min(28, max(22, height - 12))
+        gap = self._metric(6)
+        button_height = min(self._metric(28), max(self._metric(22), height - self._metric(12)))
         widths = [
-            action.width or max(48, self.font.measure(action.label) + self.button_padding_x * 2)
+            (action.width * self.scale if action.width is not None else None)
+            or max(self._metric(48), self.font.measure(action.label) + self.button_padding_x * 2)
             for action in column.actions
         ]
         total_width = sum(widths) + gap * max(0, len(widths) - 1)
         if total_width > width - self.cell_padding_x * 2 and widths:
-            available = max(32, width - self.cell_padding_x * 2 - gap * max(0, len(widths) - 1))
-            equal_width = max(32, available / len(widths))
+            available = max(self._metric(32), width - self.cell_padding_x * 2 - gap * max(0, len(widths) - 1))
+            equal_width = max(self._metric(32), available / len(widths))
             widths = [min(item_width, equal_width) for item_width in widths]
             total_width = sum(widths) + gap * max(0, len(widths) - 1)
 
@@ -1032,7 +1050,7 @@ class TableRenderer:
             return self._resolve_color(column.pill_fallback_color)
         return colors["pill_bg"]
 
-    def _pill_total_width(self, segments: list[tuple[str, float, str]], gap: int) -> float:
+    def _pill_total_width(self, segments: list[tuple[str, float, str]], gap: float) -> float:
         if not segments:
             return 0.0
         return sum(segment[1] for segment in segments) + gap * (len(segments) - 1)
@@ -1076,20 +1094,23 @@ class TableRenderer:
 
     def _dimension(self, value: float | None, fallback: float) -> float:
         if value is None:
-            return fallback
-        return max(0.0, float(value))
+            value = fallback
+        return max(0.0, float(value)) * self.scale
 
     def _optional_dimension(self, value: float | None) -> float | None:
         if value is None:
             return None
-        return max(0.0, float(value))
+        return max(0.0, float(value)) * self.scale
+
+    def _metric(self, value: float) -> float:
+        return max(0.0, float(value)) * self.scale
 
     def _shape_radius(self, configured: float | None, fallback: float, width: float, height: float) -> float:
         radius = fallback if configured is None else configured
         return self._bounded_radius(radius, max(0.0, width), max(0.0, height))
 
     def _draw_sort_indicator(self, x: float, y: float, *, ascending: bool, color: str, tags: tuple[str, ...]) -> None:
-        size = 8
+        size = self._metric(8)
         if ascending:
             points = (x, y - size / 2, x - size / 2, y + size / 2, x + size / 2, y + size / 2)
         else:

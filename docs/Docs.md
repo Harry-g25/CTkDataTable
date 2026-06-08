@@ -439,7 +439,7 @@ Every column type supports these common adjustable options:
 | --- | --- | --- | --- |
 | `key` | Required | String row field name. Must match row dictionary keys exactly. | Which row value the column displays. |
 | `title` | Title-cased `key` for dictionary columns | String | Header label. |
-| `width` | `140` for dictionary columns | Integer greater than `0` | Column width in pixels. |
+| `width` | `140` for dictionary columns | Integer greater than `0` | Preferred column width in logical pixels. |
 | `align` | Depends on type | `"left"`, `"center"`, or `"right"` | Cell and header alignment. |
 | `visible` | `True` | `True` or `False` | Whether the column is rendered and searched. |
 | `sortable` | `True` | `True` or `False` | Whether header clicks sort this column. |
@@ -1288,15 +1288,16 @@ table = CTkDataTable(
 )
 ```
 
-### Resizable Columns and Horizontal Scroll
+### Resizable Columns, Fill Width, and Horizontal Scroll
 
-Set `resizable_columns=True` to let users drag header dividers. Set `horizontal_scroll=True` when the total column width is wider than the table.
+Set `resizable_columns=True` to let users drag header dividers. Set `column_width_mode="fill"` when the visible columns should expand or shrink with the table width. Set `horizontal_scroll=True` when the total minimum column width may be wider than the table.
 
 ```python
 table = CTkDataTable(
     app,
     columns=columns,
     data=rows,
+    column_width_mode="fill",
     resizable_columns=True,
     min_column_width=64,
     horizontal_scroll=True,
@@ -1511,6 +1512,7 @@ CTkDataTable(
     font=None,
     header_font=None,
     horizontal_scroll=False,
+    column_width_mode="fixed",
     multi_select=False,
     searchable=False,
     search_delay_ms=0,
@@ -1552,6 +1554,7 @@ CTkDataTable(
 | `font` | `None` | Tkinter/CustomTkinter font object or tuple accepted by Canvas text items. | `font=("Segoe UI", 13)`. |
 | `header_font` | `None` | Font object or tuple. Defaults to `font` when supplied, otherwise a bold table default. | `header_font=("Segoe UI", 13, "bold")`. |
 | `horizontal_scroll` | `False` | `True` or `False`. | `horizontal_scroll=True`. |
+| `column_width_mode` | `"fixed"` | `"fixed"` or `"fill"`. Fixed uses configured widths; fill distributes the visible table width across columns. | `column_width_mode="fill"`. |
 | `multi_select` | `False` | `True` or `False`. | `multi_select=True`. |
 | `searchable` | `False` | `True` or `False`. | `searchable=True`. |
 | `search_delay_ms` | `0` | Integer milliseconds, `0` or greater. | `search_delay_ms=150`. |
@@ -1608,7 +1611,7 @@ Dictionary, `Column`, and `TableColumn` definitions normalize to `TableColumn`.
 | --- | --- | --- | --- |
 | `key` | Required | Unique string row field name. Must match row dictionary keys exactly. | `{"key": "name"}`. |
 | `title` | Key title-cased for dictionaries and `Column`; required for direct `TableColumn`. | String header label. | `{"title": "Customer"}`. |
-| `width` | `140` for dictionaries and `Column`; required for direct `TableColumn`. | Integer pixels greater than `0`. | `{"width": 220}`. |
+| `width` | `140` for dictionaries and `Column`; required for direct `TableColumn`. | Integer logical pixels greater than `0`. | `{"width": 220}`. |
 | `align` | Depends on `type`. | `"left"`, `"center"`, or `"right"`. | `{"align": "right"}`. |
 | `visible` | `True` | `True` or `False`. Hidden columns are not rendered or searched. | `{"visible": False}`. |
 | `sortable` | `True` | `True` or `False`. Controls header-click sorting. | `{"sortable": False}`. |
@@ -1654,7 +1657,7 @@ Default alignment by column type:
 | --- | --- | --- |
 | `Column(key)` | `key: str` | Starts a text column with the given row key. |
 | `.title(title)` | `title: str` | Sets header text. |
-| `.width(pixels)` | `pixels: int` | Sets column width. |
+| `.width(logical_pixels)` | `logical_pixels: int` | Sets preferred column width. |
 | `.align(align)` | `"left"`, `"center"`, `"right"` | Sets alignment. |
 | `.hide()` | None | Sets `visible=False`. |
 | `.no_sort()` | None | Sets `sortable=False`. |
@@ -1698,7 +1701,7 @@ String actions use the string as `key` and title-case it for the label.
 | --- | --- | --- | --- |
 | `key` | Required | String action identifier. | `{"key": "view"}`. |
 | `label` | `key.title()` for dictionaries and strings; required for direct `TableAction`. | Button/menu text. | `{"label": "View"}`. |
-| `width` | `None` | Positive integer pixels. If omitted, the button is measured from the label. | `{"width": 76}`. |
+| `width` | `None` | Positive integer logical pixels. If omitted, the button is measured from the label. | `{"width": 76}`. |
 | `fg_color` | `None` | Color string or light/dark tuple. | `{"fg_color": "#fee2e2"}`. |
 | `text_color` | `None` | Color string or light/dark tuple. | `{"text_color": "#991b1b"}`. |
 | `border_color` | `None` | Color string or light/dark tuple. | `{"border_color": "#fecaca"}`. |
@@ -1749,6 +1752,8 @@ Use `source_index` when you want the original data position. Use `view_index` wh
 | `set_columns(columns)` | `None` | Replace columns while preserving compatible sort/filter/selection state. |
 | `set_column_width(column_key, width)` | `None` | Set one column width, clamped to `min_column_width`. |
 | `get_column_width(column_key)` | `int` | Read one column width. |
+| `set_column_width_mode(mode)` | `None` | Switch between `"fixed"` and `"fill"` column layout. |
+| `get_column_width_mode()` | `"fixed"` or `"fill"` | Read the current column layout mode. |
 | `refresh()` | `None` | Redraw without changing rows or state. |
 | `get_style()` | `TableStyle` | Return the current table-wide style options. |
 | `set_style(style=None, **kwargs)` | `None` | Replace table-wide style options and redraw. |
